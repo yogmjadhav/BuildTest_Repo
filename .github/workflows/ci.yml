@@ -1,0 +1,94 @@
+name: CI Build, Test and Upload Artifact
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake cppcheck
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: choco install -y cmake --installargs '"ADD_CMAKE_TO_PATH=System"' ; choco install -y cppcheck
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -G "Visual Studio 17 2022"
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd build
+          cmake --build . --config Release
+        shell: bash
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          cd build
+          cmake --build . --config Release
+
+      - name: Run tests if present (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd build
+          if [ -f CTestTestfile.cmake ]; then ctest --output-on-failure; else echo "No tests configured"; fi
+        shell: bash
+
+      - name: Run tests if present (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          cd build
+          if (Test-Path CTestTestfile.cmake) { ctest --output-on-failure --build-config Release } else { Write-Host "No tests configured" }
+
+      - name: Collect artifact(s)
+        run: |
+          mkdir -p build/artifacts
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp build/bin/* build/artifacts/ 2>/dev/null || true
+          fi
+        shell: bash
+        if: runner.os == 'Linux'
+
+      - name: Collect artifact(s) (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path build\artifacts | Out-Null
+          # Visual Studio generator typically places EXE in build/Release or in runtime dir; copy all exe files
+          Get-ChildItem -Path build -Recurse -Filter *.exe | ForEach-Object { Copy-Item $_.FullName -Destination build\artifacts }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.os }}
+          path: build/artifacts
